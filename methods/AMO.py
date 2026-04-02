@@ -78,9 +78,9 @@ class AMO:
         # --- 3. Parse [QUERY] (Lấy cả Question và Reason) ---
         # Sửa regex để linh hoạt hơn với khoảng trắng và dấu ngoặc
         query_matches = re.findall(
-            r'\[QUERY\]\s*Question:\s*"([^"]+)"\s*Reason:\s*"([^"]+)"',
+            r'\[QUERY\]\s*Question:\s*["\']?(.*?)["\']?\s*Reason:\s*["\']?(.*?)(?=\s*\[|$)',
             text,
-            re.IGNORECASE # Thêm IGNORECASE cho chắc ăn với SLM
+            re.IGNORECASE | re.DOTALL
         )
 
         if query_matches:
@@ -199,35 +199,31 @@ class AMO:
                 if not new_queries:
                     redundancy_streak += 1
                     feedback = f"Duplicate Detected. You've searched for {parsed['items']} before. Pivot or conclude."
+                    if redundancy_streak >= 2: SATURATED = True
                     
-                    if redundancy_streak >= 2:
-                        SATURATED = True
+                else:
+                    # Reset streak nếu tìm được cái mới
+                    redundancy_streak = 0 
                     
-                    # Tăng step để tránh loop vô tận nhưng không return ngay để step sau vào mode Final
-                    current_step += 1
-                    continue
-                
-                # Reset streak nếu tìm được cái mới
-                redundancy_streak = 0 
-                
-                raw_observations = self.tool_calls_to_observations(new_queries)
-                summaries = self.summarize_tool_results(new_queries, raw_observations)
-                
-                for i, q in enumerate(new_queries):
-                    idx_in_parsed = parsed["items"].index(q)
-                    reason = parsed["reasons"][idx_in_parsed]
+                    raw_observations = self.tool_calls_to_observations(new_queries)
+                    summaries = self.summarize_tool_results(new_queries, raw_observations)
                     
-                    run_history[current_step]["action"].append({
-                        "Question": q,
-                        "Reason": reason,
-                        "Raw Observation": raw_observations[i],
-                        "Summary": summaries[i]
-                    })
-                
-                feedback = None
+                    for i, q in enumerate(new_queries):
+                        idx_in_parsed = parsed["items"].index(q)
+                        reason = parsed["reasons"][idx_in_parsed]
+                        
+                        run_history[current_step]["action"].append({
+                            "Question": q,
+                            "Reason": reason,
+                            "Raw Observation": raw_observations[i],
+                            "Summary": summaries[i]
+                        })
+                    
+                    feedback = None
             else:
                 feedback = "Format Error: Use [QUERY] or [FINAL] tags strictly."
-            
+                #redundancy_streak += 1
+                #if redundancy_streak >= 2: SATURATED = True
             current_step += 1
             #print(f"--- End Step {current_step-1} ---")
             

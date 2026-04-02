@@ -17,12 +17,14 @@ def main():
     total_f1 = 0
     total_precision = 0
     total_recall = 0
-
+    max_steps = 99999
     results = []
     for _, (qid, qa) in enumerate(
         tqdm(data.items(), total=len(data), desc=f"Running {method.name} on HotpotQA")
     ):
-
+        if max_steps <= 0:
+            break
+        max_steps -= 1
         question = qa["question"]
         gt_answer = qa["answer"]
 

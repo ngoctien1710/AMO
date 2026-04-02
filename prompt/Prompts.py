@@ -10,7 +10,8 @@ def history_to_text(history):
         history_text += f"Thought: {data.get('thought', '')}\n"
         actions = data.get('action', [])
         for act in actions:
-            history_text += f"[Action]\n"
+            history_text += f"Action:\n"
+            history_text += f"[QUERY]\n"
             # Lưu ý: Key phải khớp với lúc ông lưu (Question/question)
             history_text += f"Question: {act.get('Question')}\n"
             history_text += f"Reason: {act.get('Reason')}\n"
@@ -50,8 +51,8 @@ I know the capital cities of some countries, but I do not know the capital of Fr
 
 Action:
 [QUERY]
-Question: "What is the capital of France?"
-Reason: "Retrieve the capital city to answer the question about France."
+Question: What is the capital of France?
+Reason: Retrieve the capital city to answer the question about France.
 
 Example 2 - Using [FINAL]:
 
