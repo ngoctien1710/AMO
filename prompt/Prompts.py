@@ -1,4 +1,4 @@
-def history_to_text(history):
+def history_to_text(history, FORCE_SUMMARIZE=False):
     history_text = ""
     steps = sorted(history.keys())
     if not steps:
@@ -16,7 +16,7 @@ def history_to_text(history):
             history_text += f"Question: {act.get('Question')}\n"
             history_text += f"Reason: {act.get('Reason')}\n"
             # --- LOGIC HYBRID TẠI ĐÂY ---
-            if step == last_step:
+            if step == last_step and not FORCE_SUMMARIZE:
                 # Bước vừa xong: Đưa bản thô (Raw) để tìm manh mối cho bước tiếp theo
                 obs = act.get('Raw Observation', 'No data found.')
                 history_text += f"Observation (Detailed): {obs}\n"
@@ -27,8 +27,8 @@ def history_to_text(history):
         history_text += "-" * 20 + "\n"
     return history_text
 
-def build_amo_prompt(question, history=None, feedback=None):
-    history_text = history_to_text(history) if history else "No history yet."
+def build_amo_prompt(question, history=None, feedback=None, FORCE_SUMMARIZE=False):
+    history_text = history_to_text(history, FORCE_SUMMARIZE) if history else "No history yet."
     thought = """Use this space to summarize what you currently know from the observations, what information is missing, and what you plan to retrieve next. Keep this short (1–2 sentences)
 """ if history else """ you need to identify the core entities in the question to start the search """
     prompt = f"""
@@ -117,8 +117,8 @@ Instructions:
 """
     return prompt
 
-def build_amo_final_prompt(question, history):
-    history_text = history_to_text(history) if history else "No history yet."
+def build_amo_final_prompt(question, history, FORCE_SUMMARIZE=False):
+    history_text = history_to_text(history, FORCE_SUMMARIZE) if history else "No history yet."
     prompt = f"""
 Question: {question}
 History chat: {history_text}

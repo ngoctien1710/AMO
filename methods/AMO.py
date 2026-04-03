@@ -151,19 +151,18 @@ class AMO:
         
         redundancy_streak = 0 
         SATURATED = False
-        
+        should_summarize_now = False # Cờ này để ép LLM tóm tắt lại history nếu nó bị lạc hướng hoặc đi vào vòng lặp
         while current_step < self.max_steps:
             # --- 1. CHỌN PROMPT DỰA TRÊN TRẠNG THÁI ---
             # Nếu đã bão hòa hoặc đến bước cuối, dùng Final Prompt để ép chốt
             is_final_attempt = SATURATED or current_step >= self.max_steps - 1
-            
             if is_final_attempt:
-                prompt = build_amo_final_prompt(question, history=run_history)
+                prompt = build_amo_final_prompt(question, history=run_history, FORCE_SUMMARIZE=True)
                 response = self.model.generate(prompt, temperature=0.0) # Ép tính ổn định
             else:
-                prompt = build_amo_prompt(question, history=run_history, feedback=feedback)
+                prompt = build_amo_prompt(question, history=run_history, feedback=feedback, FORCE_SUMMARIZE=should_summarize_now)
                 response = self.model.generate(prompt, temperature=0.3)
-            
+            should_summarize_now = False # Reset cờ sau khi dùng prompt có ép tóm tắt, cho phép LLM tự do hơn ở bước tiếp theo nếu không bị bão hòa
             #print(f"LLM Response at step {current_step}:\n{response}\n")
             parsed = self.parse_llm_output_with_thought(response)
             
@@ -197,6 +196,7 @@ class AMO:
                 run_history[current_step]["queries"] = new_queries
 
                 if not new_queries:
+                    should_summarize_now = True # Nếu không có query mới nào được generate, ép LLM tóm tắt lại history để tìm manh mối mới
                     redundancy_streak += 1
                     feedback = f"Duplicate Detected. You've searched for {parsed['items']} before. Pivot or conclude."
                     if redundancy_streak >= 2: SATURATED = True
@@ -204,7 +204,6 @@ class AMO:
                 else:
                     # Reset streak nếu tìm được cái mới
                     redundancy_streak = 0 
-                    
                     raw_observations = self.tool_calls_to_observations(new_queries)
                     summaries = self.summarize_tool_results(new_queries, raw_observations)
                     
@@ -222,8 +221,9 @@ class AMO:
                     feedback = None
             else:
                 feedback = "Format Error: Use [QUERY] or [FINAL] tags strictly."
-                #redundancy_streak += 1
-                #if redundancy_streak >= 2: SATURATED = True
+                redundancy_streak += 1
+                if redundancy_streak >= 2: SATURATED = True
+                should_summarize_now = True # Ép tóm tắt lại history để LLM có cái nhìn tổng quan và hy vọng thoát khỏi format lỗi
             current_step += 1
             #print(f"--- End Step {current_step-1} ---")
             
