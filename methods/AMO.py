@@ -174,8 +174,7 @@ class AMO:
         while current_step < self.max_steps:
             # --- 1. CHỌN PROMPT DỰA TRÊN TRẠNG THÁI ---
             # Nếu đã bão hòa hoặc đến bước cuối, dùng Final Prompt để ép chốt
-            if self.compute_confidence_score(logprobs=thougt_logprobs, entropy=thought_entropy) <= 1 and current_step > 1:
-                SATURATED = True
+            
             is_final_attempt = SATURATED or current_step >= self.max_steps - 1 
             if is_final_attempt:
                 prompt = build_amo_final_prompt(question, history=run_history, FORCE_SUMMARIZE=True)
@@ -220,7 +219,9 @@ class AMO:
                 
                 run_history[current_step]["queries"] = new_queries
 
-                if not new_queries:
+                if not new_queries :
+                    if self.compute_confidence_score(logprobs=thougt_logprobs, entropy=thought_entropy) <= 1 and current_step > 0:
+                        SATURATED = True
                     should_summarize_now = True # Nếu không có query mới nào được generate, ép LLM tóm tắt lại history để tìm manh mối mới
                     redundancy_streak += 1
                     feedback = f"Duplicate Detected. You've searched for {parsed['items']} before. Pivot or conclude."
