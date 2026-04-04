@@ -2,7 +2,7 @@ import json
 
 _data_map = None
 
-def load_hotpotqa_qa(file_path="/home/tien/my_project/multiQ/data/hotpot500.json"):
+def load_hotpotqa_qa(file_path="/home/tien/my_project/AMO/data/hotpot500.json"):
     global _data_map
 
     if _data_map is None:

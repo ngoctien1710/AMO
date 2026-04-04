@@ -1,3 +1,6 @@
+from unittest import result
+from urllib import response
+
 from model.custom_language_model import LlamaLLM
 from prompt.Prompts import build_amo_prompt, build_amo_summary_prompt, build_amo_final_prompt
 from typing import List, Dict
@@ -55,6 +58,7 @@ class AMO:
             else:
                 prompt = build_amo_summary_prompt(query, obs)
                 summary = self.model.generate(prompt, temperature=0.1)
+                summary = summary["response"]
                 summaries.append(summary)
         return summaries
 
@@ -143,25 +147,46 @@ class AMO:
 
         return observations
 
+    def compute_confidence_score(self, logprobs: list, entropy: list, theta: float = 1e-8) -> float:
+        if not logprobs or not entropy:
+            return 0.0
+    
+        avg_logprob = sum(logprobs) / len(logprobs)
+        avg_entropy = sum(entropy) / len(entropy)
+        
+        # Cách 1: Dùng xác suất thực (Dễ đặt ngưỡng từ 0 đến +vô cùng) 
+        # confidence = torch.exp(torch.tensor(avg_logprob)).item()
+        # return confidence / (avg_entropy + theta)
+
+        # Cách 2: Dùng hiệu số (Đơn giản, tính toán nhanh)
+        return avg_logprob - avg_entropy
+
     def inference(self, question: str, qid: str) -> Dict:
         feedback = None
         self.tools.set_qid(qid)
         current_step = 0
         run_history = {}
-        
+        thougt_logprobs = []    
+        thought_entropy = []
         redundancy_streak = 0 
         SATURATED = False
         should_summarize_now = False # Cờ này để ép LLM tóm tắt lại history nếu nó bị lạc hướng hoặc đi vào vòng lặp
         while current_step < self.max_steps:
             # --- 1. CHỌN PROMPT DỰA TRÊN TRẠNG THÁI ---
             # Nếu đã bão hòa hoặc đến bước cuối, dùng Final Prompt để ép chốt
-            is_final_attempt = SATURATED or current_step >= self.max_steps - 1
+            if self.compute_confidence_score(logprobs=thougt_logprobs, entropy=thought_entropy) <= 1 and current_step > 1:
+                SATURATED = True
+            is_final_attempt = SATURATED or current_step >= self.max_steps - 1 
             if is_final_attempt:
                 prompt = build_amo_final_prompt(question, history=run_history, FORCE_SUMMARIZE=True)
                 response = self.model.generate(prompt, temperature=0.0) # Ép tính ổn định
+                response = response["response"]
             else:
                 prompt = build_amo_prompt(question, history=run_history, feedback=feedback, FORCE_SUMMARIZE=should_summarize_now)
-                response = self.model.generate(prompt, temperature=0.3)
+                output = self.model.generate(prompt, temperature=0.3)
+                response = output["response"]
+                thougt_logprobs = output.get("thought_logprobs", [])
+                thought_entropy = output.get("thought_entropy", [])
             should_summarize_now = False # Reset cờ sau khi dùng prompt có ép tóm tắt, cho phép LLM tự do hơn ở bước tiếp theo nếu không bị bão hòa
             #print(f"LLM Response at step {current_step}:\n{response}\n")
             parsed = self.parse_llm_output_with_thought(response)
