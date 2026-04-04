@@ -1,12 +1,12 @@
 from unittest import result
 from urllib import response
-
+from collections import defaultdict
 from model.custom_language_model import LlamaLLM
 from prompt.Prompts import build_amo_prompt, build_amo_summary_prompt, build_amo_final_prompt
 from typing import List, Dict
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, util
 import re
 from methods.Tools import Tools
 class AMO:
@@ -35,32 +35,50 @@ class AMO:
         sim_matrix = cosine_similarity(new_embeds[unique_indices], old_embeds)
         return [unique_new_queries[i] for i in range(len(unique_new_queries)) if np.max(sim_matrix[i]) < threshold]
     
-    def summarize_tool_results(self, queries: List[str], observations: List[str]) -> List[str]:
+    def summarize_tool_results(self, queries: List[str], observations: List[str], k=2) -> List[dict]:
         """
-        Tóm tắt kết quả tool theo từng query.
-
-        Args:
-            queries: list các query mà LLM đã generate
-            observations: list kết quả tương ứng từ tool (cùng index với queries)
-
-        Returns:
-            summaries: list tóm tắt cho mỗi query
+        Xử lý hàng loạt List[Query] và List[Obs] để trích xuất Graph Facts.
         """
-        summaries = []
-
-        # check length match
         if len(queries) != len(observations):
-            raise ValueError("Length of queries and observations must match!")
+            raise ValueError("Length mismatch!")
 
+        # Bước 1: Thu thập tất cả raw_output từ LLM (vẫn phải chạy vòng lặp vì LLM gọi từng query)
+        raw_outputs = []
         for query, obs in zip(queries, observations):
-            if not obs or "no relevant information" in obs.lower() or len(obs.strip()) < 10:
-                summaries.append("No relevant information found in the knowledge base.")
-            else:
-                prompt = build_amo_summary_prompt(query, obs)
-                summary = self.model.generate(prompt, temperature=0.1)
-                summary = summary["response"]
-                summaries.append(summary)
-        return summaries
+            if not obs or len(obs.strip()) < 10:
+                raw_outputs.append(None)
+                continue
+            
+            prompt = build_amo_summary_prompt(query, obs)
+            # Giả sử self.model.generate trả về dict có key "response"
+            resp = self.model.generate(prompt, temperature=0.1)["response"]
+            raw_outputs.append(resp)
+
+        # Bước 2: Xử lý hậu kỳ (Parse + Deduplicate + k-hop) cho từng kết quả
+        final_results = []
+        for i, raw_output in enumerate(raw_outputs):
+            if raw_output is None:
+                final_results.append({"graph_facts": []})
+                continue
+
+            # Gọi hàm parse anh em mình đã chốt (nên tích hợp batch embed bên trong hàm này nếu được)
+            all_triplets = self.parse_and_deduplicate(raw_output, self.embed_model)
+            
+            # Lấy seed dựa trên query tương ứng
+            seeds = self.extract_seeds_from_query(queries[i], all_triplets, self.embed_model)
+            
+            # Duyệt k-hop
+            sub_graph = self.expand_graph_k_hop(seeds, all_triplets, k=k)
+            
+            if not sub_graph and all_triplets:
+                sub_graph = all_triplets[:3] 
+            # -----------------------------------------------
+
+            final_results.append({
+                "graph_facts": sub_graph
+            })
+
+        return final_results
 
     def parse_llm_output_with_thought(self, text: str) -> Dict:
         """
@@ -103,21 +121,119 @@ class AMO:
         # --- 4. Không tìm thấy gì ---
         return {"thought": thought_text, "type": "UNKNOWN", "items": [], "reasons": []}
 
-    # def tool_calls_to_observations(self, queries: List[str]) -> List[str]:
-    #     """
-    #     Gọi tool tương ứng với từng query và trả về list observation.
+    def parse_and_deduplicate(self, llm_output, embed_model, threshold=0.92):
+        raw_triplets = []
+        lines = llm_output.strip().split('\n')
+        
+        # --- Bước 1: Parse thô (V3) ---
+        for line in lines:
+            if '|' not in line: continue
+            line = re.sub(r"^[(\s]+|[)\s]+$", "", line.strip())
+            parts = [p.strip().lower() for p in line.split('|')]
+            if len(parts) == 3 and all(len(p) > 1 for p in parts):
+                if not any(x in parts[0] or x in parts[2] for x in ["entity a", "entity b", "relationship"]):
+                    raw_triplets.append(tuple(parts))
+        
+        if not raw_triplets: return []
 
-    #     Args:
-    #         queries: list câu hỏi để gọi tool
+        # --- Bước 2: Lọc trùng bằng Sklearn Cosine Similarity ---
+        triplet_texts = [f"{s} {r} {o}" for s, r, o in raw_triplets]
+        embeddings = embed_model.encode(triplet_texts) # Đầu ra là numpy array
+        
+        unique_indices = []
+        for i in range(len(embeddings)):
+            is_duplicate = False
+            for j in unique_indices:
+                # Reshape về 2D: (1, n_features)
+                vec_i = embeddings[i].reshape(1, -1)
+                vec_j = embeddings[j].reshape(1, -1)
+                
+                sim = cosine_similarity(vec_i, vec_j)[0][0]
+                if sim > threshold:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_indices.append(i)
+                
+        return [raw_triplets[i] for i in unique_indices]
+    
+    def extract_seeds_from_query(self, query, triplets, embed_model, threshold=0.85):
+        all_nodes = set()
+        for s, r, o in triplets:
+            all_nodes.add(s); all_nodes.add(o)
+            
+        query_lower = query.lower()
+        seeds = set()
 
-    #     Returns:
-    #         observations: list kết quả trả về từ tool, cùng index với queries
-    #     """
-    #     observations = []
-    #     for query in queries:
-    #         obs = self.tools.search_sentences(query)
-    #         observations.append(obs)
-    #     return observations
+        # --- Bước 1: Exact Match ---
+        for node in all_nodes:
+            if node in query_lower:
+                seeds.add(node)
+                
+        # --- Bước 2: Semantic Seed với Sklearn ---
+        if not seeds and all_nodes:
+            node_list = list(all_nodes)
+            query_emb = embed_model.encode([query_lower]) # Encode list để ra 2D ngay
+            node_embs = embed_model.encode(node_list)     # Matrix 2D
+            
+            # Tính similarity giữa 1 query và tất cả nodes cùng lúc (Batch processing)
+            similarities = cosine_similarity(query_emb, node_embs)[0]
+            
+            for idx, sim in enumerate(similarities):
+                if sim > threshold:
+                    seeds.add(node_list[idx])
+                        
+        return list(seeds)
+    
+
+    def expand_graph_k_hop(self, seeds, all_triplets, k=2):
+        """
+        Input: 
+            - seeds: Danh sách các thực thể gốc (từ Query).
+            - all_triplets: Toàn bộ kho Triplet đã parse và lọc trùng.
+            - k: Số bước nhảy tối đa.
+        Output:
+            - result_triplets: List các bộ ba (S, R, O) nằm trong phạm vi k-hop.
+        """
+        if not seeds or k <= 0:
+            return []
+
+        # --- Bước 1: Xây dựng đồ thị (Adjacency List) để truy xuất nhanh ---
+        # Ta xây dựng đồ thị vô hướng (bi-directional) để có thể duyệt từ S sang O và ngược lại
+        graph = defaultdict(list)
+        for triplet in all_triplets:
+            s, r, o = triplet
+            graph[s].append(triplet)
+            graph[o].append(triplet)
+
+        visited_nodes = set(seeds)
+        visited_triplets = set()
+        current_layer = set(seeds)
+
+        # --- Bước 2: Duyệt theo chiều rộng (BFS) đến k-hop ---
+        for _ in range(k):
+            next_layer = set()
+            for node in current_layer:
+                # Lấy tất cả các cạnh liên quan đến node hiện tại
+                for triplet in graph[node]:
+                    if triplet not in visited_triplets:
+                        visited_triplets.add(triplet)
+                        
+                        # Xác định node tiếp theo để nhảy (neighbor)
+                        s, r, o = triplet
+                        neighbor = s if node == o else o
+                        
+                        if neighbor not in visited_nodes:
+                            visited_nodes.add(neighbor)
+                            next_layer.add(neighbor)
+            
+            # Cập nhật lớp hiện tại cho hop tiếp theo
+            current_layer = next_layer
+            if not current_layer: # Hết đường để đi
+                break
+
+        return list(visited_triplets)
+
     def tool_calls_to_observations(self, queries: List[str]) -> List[str]:
         """
         Gọi tool tương ứng với từng query và trả về list observation.
@@ -241,7 +357,7 @@ class AMO:
                             "Question": q,
                             "Reason": reason,
                             "Raw Observation": raw_observations[i],
-                            "Summary": summaries[i]
+                            "Graph Facts": summaries[i]["graph_facts"]
                         })
                     
                     feedback = None

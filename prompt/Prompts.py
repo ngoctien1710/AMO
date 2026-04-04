@@ -22,8 +22,13 @@ def history_to_text(history, FORCE_SUMMARIZE=False):
                 history_text += f"Observation (Detailed): {obs}\n"
             else:
                 # Các bước cũ: Chỉ đưa bản tóm tắt (Summary) để tránh nhiễu
-                summary = act.get('Summary', 'Information processed.')
-                history_text += f"Observation (Summary): {summary}\n"
+                graph_facts = act.get('Graph Facts', []) # Mặc định là list rỗng thay vì string
+                if graph_facts:
+                    facts_str = "\n".join([f"- ({s} | {r} | {o})" for s, r, o in graph_facts])
+                    history_text += f"Graph Facts:\n{facts_str}\n"
+                else:
+                    history_text += "Graph Facts: (No information extracted)\n"
+
         history_text += "-" * 20 + "\n"
     return history_text
 
@@ -44,6 +49,10 @@ Action: Decide what to do next. **You have exactly two options for this Action s
 Question: <your retrieval question>
 Reason: <why you need this question>
 
+[FINAL] format:
+[FINAL] 
+<your concise answer here>
+
 Example 1 - Using [QUERY]:
 
 Thought:
@@ -60,7 +69,8 @@ Thought:
 Observation states that the capital of France is known.
 
 Action:
-[FINAL] Paris
+[FINAL] 
+Paris
 
 Important rules:
 - Treat all information in the observations as factual and fully reliable.
@@ -84,38 +94,36 @@ Please reconsider your strategy and generate NEW, DISTINCT queries that target m
 """
     return prompt
 
-
 def build_amo_summary_prompt(query, observation):
     """
-    Xây dựng prompt để LLM tóm tắt kết quả tool (observation) theo query.
-
-    Args:
-        query: str, câu hỏi hoặc query mà agent đã tạo
-        observation: str, kết quả raw từ tool
-
-    Returns:
-        prompt: str, prompt hoàn chỉnh để gọi LLM
+    Xây dựng prompt để LLM trích xuất Knowledge Graph (Triplets) từ kết quả raw.
+    Mục tiêu: Chống tóm tắt lụi, tập trung vào thực thể và quan hệ liên quan đến Query.
     """
     prompt = f"""
-You are a summarization assistant. You are NOT allowed to answer the query. 
-Your ONLY task is to summarize the raw results provided.
+You are a Knowledge Graph Extractor. Your task is to transform raw text into a structured set of triplets (Subject, Relation, Object).
 
 Query: "{query}"
 
-Raw results: "{observation}"
+Raw Information: "{observation}"
 
 Instructions:
-1. DO NOT answer the query.
-2. Summarize the information in 1-2 sentences only.
-3. Focus ONLY on the information relevant to the query.
-4. Make it concise and easy to understand.
-5. Avoid repeating information or adding your own opinions.
-6. Output format MUST be exactly:
-   [SUMMARY]: <your summary here>
+1. ONLY extract information that directly helps in answering the Query. Ignore all distractors.
+2. Focus on "Nodes" (Entities: Names, Dates, Locations, Events) and "Edges" (Relationships between them).
+3. Format each finding as a triplet: (Subject | Relationship | Object).
+4. DO NOT write full sentences. DO NOT answer the query.
+5. If the information is conflicting across sources, include both but mark them clearly.
+
+
+Output format MUST be:
+[SUMMARY]:
+(Entity A | relationship | Entity B)
+(Entity B | relationship | Entity C)
+...
 
 [SUMMARY]:
 """
     return prompt
+
 
 def build_amo_final_prompt(question, history, FORCE_SUMMARIZE=False):
     history_text = history_to_text(history, FORCE_SUMMARIZE) if history else "No history yet."
