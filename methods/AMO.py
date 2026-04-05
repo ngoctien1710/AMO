@@ -9,6 +9,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer, util
 import re
 from methods.Tools import Tools
+<<<<<<< HEAD
+=======
+import math
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
 class AMO:
     def __init__(self, model):
         self.model = model
@@ -35,6 +39,7 @@ class AMO:
         sim_matrix = cosine_similarity(new_embeds[unique_indices], old_embeds)
         return [unique_new_queries[i] for i in range(len(unique_new_queries)) if np.max(sim_matrix[i]) < threshold]
     
+<<<<<<< HEAD
     def summarize_tool_results(self, queries: List[str], observations: List[str], k=2) -> List[dict]:
         """
         Xử lý hàng loạt List[Query] và List[Obs] để trích xuất Graph Facts.
@@ -43,6 +48,12 @@ class AMO:
             raise ValueError("Length mismatch!")
 
         # Bước 1: Thu thập tất cả raw_output từ LLM (vẫn phải chạy vòng lặp vì LLM gọi từng query)
+=======
+    def summarize_tool_results(self, queries: List[str], observations: List[str], top_k=2) -> List[dict]:
+        if len(queries) != len(observations):
+            raise ValueError("Length mismatch!")
+
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
         raw_outputs = []
         for query, obs in zip(queries, observations):
             if not obs or len(obs.strip()) < 10:
@@ -50,17 +61,24 @@ class AMO:
                 continue
             
             prompt = build_amo_summary_prompt(query, obs)
+<<<<<<< HEAD
             # Giả sử self.model.generate trả về dict có key "response"
             resp = self.model.generate(prompt, temperature=0.1)["response"]
             raw_outputs.append(resp)
 
         # Bước 2: Xử lý hậu kỳ (Parse + Deduplicate + k-hop) cho từng kết quả
+=======
+            resp = self.model.generate(prompt, temperature=0.1)["response"]
+            raw_outputs.append(resp)
+
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
         final_results = []
         for i, raw_output in enumerate(raw_outputs):
             if raw_output is None:
                 final_results.append({"graph_facts": []})
                 continue
 
+<<<<<<< HEAD
             # Gọi hàm parse anh em mình đã chốt (nên tích hợp batch embed bên trong hàm này nếu được)
             all_triplets = self.parse_and_deduplicate(raw_output, self.embed_model)
             
@@ -76,6 +94,28 @@ class AMO:
 
             final_results.append({
                 "graph_facts": sub_graph
+=======
+            # 1. Parse & Deduplicate
+            all_triplets = self.parse_and_deduplicate(raw_output, self.embed_model)
+            
+            # 2. Extract Seeds & K-hop Expansion
+            seeds = self.extract_seeds_from_query(queries[i], all_triplets, self.embed_model)
+            sub_graph = self.expand_graph_k_hop(seeds, all_triplets, k=top_k)
+            
+            # 3. Rerank để lấy 8 thằng tinh túy nhất liên quan đến Query
+            # Lưu ý: Rerank trên sub_graph đã expand để giữ tính kết nối
+            top_k_sub_graph = self.rerank_triplets(queries[i], sub_graph, top_k=10)
+
+            # 4. Fallback Logic: Đảm bảo không bao giờ trả về list rỗng nếu có data
+            if not top_k_sub_graph:
+                # Nếu rerank/k-hop xịt, lấy 3 thằng đầu của list parse thô
+                final_sub_graph = all_triplets[:3] if all_triplets else []
+            else:
+                final_sub_graph = top_k_sub_graph
+
+            final_results.append({
+                "graph_facts": final_sub_graph 
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
             })
 
         return final_results
@@ -157,7 +197,11 @@ class AMO:
                 
         return [raw_triplets[i] for i in unique_indices]
     
+<<<<<<< HEAD
     def extract_seeds_from_query(self, query, triplets, embed_model, threshold=0.85):
+=======
+    def extract_seeds_from_query(self, query, triplets, embed_model, threshold=0.9):
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
         all_nodes = set()
         for s, r, o in triplets:
             all_nodes.add(s); all_nodes.add(o)
@@ -185,6 +229,29 @@ class AMO:
                         
         return list(seeds)
     
+<<<<<<< HEAD
+=======
+    def rerank_triplets(self, query: str, triplets: List[tuple], top_k=5):
+        if not triplets: return []
+        
+        # 1. Biến triplet thành văn bản để encode
+        # "Subject Relation Object"
+        triplet_texts = [f"{s} {r} {o}" for s, r, o in triplets]
+        
+        # 2. Encode Query và Triplets
+        query_emb = self.embed_model.encode([query]) # 2D array
+        triplet_embs = self.embed_model.encode(triplet_texts) # Matrix
+        
+        # 3. Tính Similarity
+        # Kết quả là array 1D chứa điểm của từng triplet
+        scores = cosine_similarity(query_emb, triplet_embs)[0]
+        
+        # 4. Sắp xếp và lấy Top K
+        scored_triplets = sorted(zip(triplets, scores), key=lambda x: x[1], reverse=True)
+        
+        # Trả về list các triplet đã được lọc
+        return [t for t, s in scored_triplets[:top_k]]
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
 
     def expand_graph_k_hop(self, seeds, all_triplets, k=2):
         """
@@ -264,6 +331,7 @@ class AMO:
         return observations
 
     def compute_confidence_score(self, logprobs: list, entropy: list, theta: float = 1e-8) -> float:
+<<<<<<< HEAD
         if not logprobs or not entropy:
             return 0.0
     
@@ -276,6 +344,19 @@ class AMO:
 
         # Cách 2: Dùng hiệu số (Đơn giản, tính toán nhanh)
         return avg_logprob - avg_entropy
+=======
+        
+        avg_logprob = sum(logprobs) / len(logprobs)
+        avg_entropy = sum(entropy) / len(entropy)
+        
+        # Chuyển logprob về xác suất thực (0.0 đến 1.0)
+        prob = math.exp(avg_logprob) 
+        
+        # Score = Xác suất / (Entropy + nhiễu)
+        # Score càng cao (>1) -> Cực kỳ tự tin
+        # Score thấp (<0.5) -> Đang lú, cần thêm thông tin (Retrieval)
+        return prob / (avg_entropy + theta)
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
 
     def inference(self, question: str, qid: str) -> Dict:
         feedback = None
@@ -298,7 +379,11 @@ class AMO:
                 response = response["response"]
             else:
                 prompt = build_amo_prompt(question, history=run_history, feedback=feedback, FORCE_SUMMARIZE=should_summarize_now)
+<<<<<<< HEAD
                 output = self.model.generate(prompt, temperature=0.3)
+=======
+                output = self.model.generate(prompt, temperature=0.3, use_logprob=True, use_entropy=True)
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
                 response = output["response"]
                 thougt_logprobs = output.get("thought_logprobs", [])
                 thought_entropy = output.get("thought_entropy", [])
@@ -336,7 +421,12 @@ class AMO:
                 run_history[current_step]["queries"] = new_queries
 
                 if not new_queries :
+<<<<<<< HEAD
                     if self.compute_confidence_score(logprobs=thougt_logprobs, entropy=thought_entropy) <= 1 and current_step > 0:
+=======
+                    #print(self.compute_confidence_score(logprobs=thougt_logprobs, entropy=thought_entropy))
+                    if self.compute_confidence_score(logprobs=thougt_logprobs, entropy=thought_entropy) >= 1 and current_step > 0:
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
                         SATURATED = True
                     should_summarize_now = True # Nếu không có query mới nào được generate, ép LLM tóm tắt lại history để tìm manh mối mới
                     redundancy_streak += 1

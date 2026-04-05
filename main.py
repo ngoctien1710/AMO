@@ -10,14 +10,24 @@ from utils.utils import save_predictions, save_metrics
 def main():
 
     data = load_hotpotqa_qa()
+<<<<<<< HEAD
     model = LlamaLLM()
     method = AMO(model = model)
+=======
+    print("Ban sua confidence trong AMO")
+    model = LlamaLLM(model_name="Qwen/Qwen2.5-3B-Instruct", quantization=True) 
+    method = AMO(model = model) # dang test voi 3 dau ra tool thay vi 5 
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
 
     total_em = 0
     total_f1 = 0
     total_precision = 0
     total_recall = 0
+<<<<<<< HEAD
     max_steps = 20
+=======
+    max_steps = 999999
+>>>>>>> a540a6f (EM 30.8, F1 44.13)
     results = []
     for _, (qid, qa) in enumerate(
         tqdm(data.items(), total=len(data), desc=f"Running {method.name} on HotpotQA")
